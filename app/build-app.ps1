@@ -1,19 +1,16 @@
-# Builds PixelOfficeTycoon.exe and installs it with Desktop and Start menu shortcuts.
+# Builds the single-file PixelOfficeTycoon.exe (game + WebView2 DLLs embedded) into app\dist.
 # Needs the WebView2 SDK DLLs in app\lib (from the Microsoft.Web.WebView2 NuGet package):
 #   lib\Microsoft.Web.WebView2.Core.dll, lib\Microsoft.Web.WebView2.WinForms.dll (net462 builds)
 #   lib\WebView2Loader.dll (runtimes\win-x64\native)
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $lib = Join-Path $here 'lib'
-$dest = Join-Path $env:LOCALAPPDATA 'Programs\PixelOfficeTycoon'
+$dist = Join-Path $here 'dist'
+$game = Join-Path (Split-Path $here) 'PixelOfficeTycoon.html'
 $csc = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe'
-New-Item -ItemType Directory -Force $dest | Out-Null
-Copy-Item "$lib\Microsoft.Web.WebView2.Core.dll", "$lib\Microsoft.Web.WebView2.WinForms.dll", "$lib\WebView2Loader.dll", (Join-Path $here 'PixelOfficeTycoon.ico') $dest -Force
-Copy-Item (Join-Path (Split-Path $here) 'PixelOfficeTycoon.html') $dest -Force
-& $csc /nologo /target:winexe /platform:x64 /optimize+ "/out:$dest\PixelOfficeTycoon.exe" "/win32icon:$dest\PixelOfficeTycoon.ico" `
-  "/r:$dest\Microsoft.Web.WebView2.Core.dll" "/r:$dest\Microsoft.Web.WebView2.WinForms.dll" /r:System.Windows.Forms.dll /r:System.Drawing.dll (Join-Path $here 'Program.cs')
+New-Item -ItemType Directory -Force $dist | Out-Null
+& $csc /nologo /target:winexe /platform:x64 /optimize+ "/out:$dist\PixelOfficeTycoon.exe" "/win32icon:$here\PixelOfficeTycoon.ico" `
+  "/r:$lib\Microsoft.Web.WebView2.Core.dll" "/r:$lib\Microsoft.Web.WebView2.WinForms.dll" /r:System.Windows.Forms.dll /r:System.Drawing.dll `
+  "/resource:$lib\Microsoft.Web.WebView2.Core.dll,Microsoft.Web.WebView2.Core.dll" "/resource:$lib\Microsoft.Web.WebView2.WinForms.dll,Microsoft.Web.WebView2.WinForms.dll" `
+  "/resource:$lib\WebView2Loader.dll,WebView2Loader.dll" "/resource:$game,PixelOfficeTycoon.html" (Join-Path $here 'Program.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Compile failed' }
-$sh = New-Object -ComObject WScript.Shell
-foreach ($l in @((Join-Path ([Environment]::GetFolderPath('Desktop')) 'Pixel Office Tycoon.lnk'), (Join-Path ([Environment]::GetFolderPath('Programs')) 'Pixel Office Tycoon.lnk'))) {
-  $s = $sh.CreateShortcut($l); $s.TargetPath = "$dest\PixelOfficeTycoon.exe"; $s.WorkingDirectory = $dest; $s.IconLocation = "$dest\PixelOfficeTycoon.exe,0"; $s.Save()
-}
-'Installed to ' + $dest
+'Built ' + (Join-Path $dist 'PixelOfficeTycoon.exe')

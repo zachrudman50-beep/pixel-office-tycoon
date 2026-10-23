@@ -1,3 +1,4 @@
 app/lib/
 *.exe
 *.dll
+app/dist/

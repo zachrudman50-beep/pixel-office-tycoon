@@ -1,6 +1,8 @@
 using System;
 using System.Drawing;
 using System.IO;
+using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using Microsoft.Web.WebView2.Core;
@@ -8,29 +10,82 @@ using Microsoft.Web.WebView2.WinForms;
 
 namespace PixelOfficeTycoon
 {
+    // Single-file app: the game HTML and the WebView2 SDK DLLs are embedded resources.
+    // Managed DLLs load straight from memory; the native loader and the game are unpacked
+    // to %LOCALAPPDATA%\PixelOfficeTycoon on launch. Saves live in ...\WebData.
     static class Program
     {
+        public static readonly string Home = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PixelOfficeTycoon");
+
         [STAThread]
-        static void Main()
+        static void Main(string[] args)
         {
+            AppDomain.CurrentDomain.AssemblyResolve += ResolveEmbedded;
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            Application.Run(new GameForm());
+            Run(args);
+        }
+
+        static Assembly ResolveEmbedded(object sender, ResolveEventArgs e)
+        {
+            string name = new AssemblyName(e.Name).Name;
+            if (name != "Microsoft.Web.WebView2.Core" && name != "Microsoft.Web.WebView2.WinForms") return null;
+            byte[] bytes = ReadResource(name + ".dll");
+            return bytes == null ? null : Assembly.Load(bytes);
+        }
+
+        public static byte[] ReadResource(string name)
+        {
+            using (Stream s = Assembly.GetExecutingAssembly().GetManifestResourceStream(name))
+            {
+                if (s == null) return null;
+                using (MemoryStream ms = new MemoryStream()) { s.CopyTo(ms); return ms.ToArray(); }
+            }
+        }
+
+        public static string Unpack(string resource, string folder)
+        {
+            Directory.CreateDirectory(folder);
+            string path = Path.Combine(folder, resource);
+            byte[] bytes = ReadResource(resource);
+            if (!File.Exists(path) || new FileInfo(path).Length != bytes.Length || resource.EndsWith(".html")) File.WriteAllBytes(path, bytes);
+            return path;
+        }
+
+        // Kept separate so WebView2 types are only touched after the resolver is registered.
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        static void Run(string[] args)
+        {
+            string dataDir = Path.Combine(Home, "WebData");
+            for (int i = 0; i < args.Length - 1; i++) if (args[i] == "--data") dataDir = args[i + 1];
+            try
+            {
+                string loaderDir = Path.Combine(Home, "bin");
+                Unpack("WebView2Loader.dll", loaderDir);
+                CoreWebView2Environment.SetLoaderDllFolderPath(loaderDir);
+                Unpack("PixelOfficeTycoon.html", Path.Combine(Home, "game"));
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("The game could not unpack its files: " + ex.Message, "Pixel Office Tycoon");
+                return;
+            }
+            Application.Run(new GameForm(dataDir, Path.Combine(Home, "game")));
         }
     }
 
-    // A plain window that hosts the game. Saves live in %LOCALAPPDATA%\PixelOfficeTycoon\WebData.
     class GameForm : Form
     {
         readonly WebView2 web;
-        readonly string appDir = AppDomain.CurrentDomain.BaseDirectory;
-        readonly string dataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PixelOfficeTycoon", "WebData");
+        readonly string dataDir, gameDir;
         bool closingReady, fullscreen;
         FormWindowState prevState;
         FormBorderStyle prevBorder;
 
-        public GameForm()
+        public GameForm(string dataDir, string gameDir)
         {
+            this.dataDir = dataDir;
+            this.gameDir = gameDir;
             Text = "Pixel Office Tycoon";
             BackColor = Color.FromArgb(28, 32, 50);
             StartPosition = FormStartPosition.CenterScreen;
@@ -61,7 +116,7 @@ namespace PixelOfficeTycoon
                 cw.Settings.IsStatusBarEnabled = false;
                 cw.Settings.AreBrowserAcceleratorKeysEnabled = false;
                 cw.Settings.IsZoomControlEnabled = false;
-                cw.SetVirtualHostNameToFolderMapping("pixeloffice.game", appDir, CoreWebView2HostResourceAccessKind.Allow);
+                cw.SetVirtualHostNameToFolderMapping("pixeloffice.game", gameDir, CoreWebView2HostResourceAccessKind.Allow);
                 cw.NewWindowRequested += (s, e) => { e.Handled = true; try { System.Diagnostics.Process.Start(e.Uri); } catch { } };
                 cw.WebMessageReceived += (s, e) => { if (e.TryGetWebMessageAsString() == "fullscreen") ToggleFullscreen(); };
                 await cw.AddScriptToExecuteOnDocumentCreatedAsync(
@@ -70,7 +125,8 @@ namespace PixelOfficeTycoon
             }
             catch (WebView2RuntimeNotFoundException)
             {
-                MessageBox.Show("Pixel Office Tycoon needs the Microsoft Edge WebView2 Runtime. Install it from Microsoft, then open the game again.", "Pixel Office Tycoon");
+                if (MessageBox.Show("Pixel Office Tycoon needs the free Microsoft Edge WebView2 Runtime, which this PC is missing. Open Microsoft's download page now?", "Pixel Office Tycoon", MessageBoxButtons.YesNo) == DialogResult.Yes)
+                    try { System.Diagnostics.Process.Start("https://go.microsoft.com/fwlink/p/?LinkId=2124703"); } catch { }
                 Close();
             }
             catch (Exception ex)
